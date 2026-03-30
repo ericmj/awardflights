@@ -39,9 +39,8 @@ defmodule Awardflights.FlightScannerTest do
   end
 
   defp stub_api(response_fn) do
-    Req.Test.stub(Awardflights.SasAwardApi, response_fn)
-    Req.Test.allow(Awardflights.SasAwardApi, self(), Process.whereis(FlightScanner))
     Req.Test.set_req_test_to_shared(self())
+    Req.Test.stub(Awardflights.SasAwardApi, response_fn)
   end
 
   describe "get_status/0" do

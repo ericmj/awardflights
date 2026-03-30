@@ -160,15 +160,15 @@ defmodule Awardflights.CsvWriter do
   end
 
   defp read_csv_rows(file) do
-    if File.exists?(file) do
-      file
-      |> File.read!()
-      |> String.split("\n", trim: true)
-      # Skip header
-      |> Enum.drop(1)
-      |> Enum.map(&parse_csv_row/1)
-    else
-      []
+    case File.read(file) do
+      {:ok, content} ->
+        content
+        |> String.split("\n", trim: true)
+        |> Enum.drop(1)
+        |> Enum.map(&parse_csv_row/1)
+
+      {:error, _} ->
+        []
     end
   end
 
