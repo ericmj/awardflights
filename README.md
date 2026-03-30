@@ -1,18 +1,35 @@
-# Awardflights
+# Award Flights
 
-To start your Phoenix server:
+A Phoenix LiveView app for scanning SAS EuroBonus award flight availability and finding round trip combinations.
 
-* Run `mix setup` to install and setup dependencies
-* Start Phoenix endpoint with `mix phx.server` or inside IEx with `iex -S mix phx.server`
+## Features
 
-Now you can visit [`localhost:4000`](http://localhost:4000) from your browser.
+- **Flight Scanner** -- Scans SAS award flight availability across multiple routes and date ranges with configurable parallelism
+  - Supports both the Partner API (award-api) and SAS Direct API (offers-api)
+  - Multiple credential rotation with automatic rate limit handling
+  - Skip already-scanned routes within a configurable time window
+  - Real-time progress updates via LiveView
+- **Trip Correlator** -- Finds round trip combinations from scanned results
+  - Filter by airports, date ranges, trip duration, cabin class, and source (SAS/Partner)
+  - Displays airline names, booking classes, and seat availability
+  - Exports results to CSV
 
-Ready to run in production? Please [check our deployment guides](https://hexdocs.pm/phoenix/deployment.html).
+## Setup
 
-## Learn more
+```bash
+mix setup
+mix phx.server
+```
 
-* Official website: https://www.phoenixframework.org/
-* Guides: https://hexdocs.pm/phoenix/overview.html
-* Docs: https://hexdocs.pm/phoenix
-* Forum: https://elixirforum.com/c/phoenix-forum
-* Source: https://github.com/phoenixframework/phoenix
+Visit [localhost:4000](http://localhost:4000) for the scanner and [localhost:4000/trips](http://localhost:4000/trips) for the trip correlator.
+
+## Authentication
+
+The scanner requires SAS EuroBonus session credentials. Add them through the web UI:
+
+- **Partner API** -- Cookie or bearer token from an authenticated sas.se session
+- **SAS Direct API** -- Auth token and cookies from an authenticated sas.se session
+
+## Output
+
+Scan results are saved to `results.csv` and trip correlator results to `trips.csv`.
