@@ -324,6 +324,27 @@ defmodule Awardflights.SasOffersApiTest do
                )
     end
 
+    test "returns cloudflare_blocked when challenge HTML is returned with exit 0" do
+      # A Cloudflare "Just a moment..." interstitial is served as HTTP 200, so
+      # curl exits 0 and the body reaches parse_response.
+      html_response = """
+      <!DOCTYPE html><html lang="en-US"><head><title>Just a moment...</title></head>
+      <body>cloudflare challenge-platform</body></html>
+      """
+
+      setup_mock(html_response, 0)
+
+      assert {:error, :cloudflare_blocked} =
+               SasOffersApi.search_flights("GOT", "NYC", "2026-09-04", "cookies", make_jwt("s"))
+    end
+
+    test "returns unexpected_response for JSON without outboundFlights (exit 0)" do
+      setup_mock(Jason.encode!(%{"unexpected" => true}), 0)
+
+      assert {:error, {:unexpected_response, _}} =
+               SasOffersApi.search_flights("GOT", "NYC", "2026-09-04", "cookies", make_jwt("s"))
+    end
+
     test "returns curl_failed on non-zero exit code that's not 22 or 28" do
       setup_mock("Connection refused", 7)
 

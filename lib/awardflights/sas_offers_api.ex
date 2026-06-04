@@ -8,6 +8,15 @@ defmodule Awardflights.SasOffersApi do
 
   @base_url "https://www.sas.se/api/offers/flights"
 
+  # Maintained curl-impersonate fork. What gets past Cloudflare on www.sas.se is
+  # the TLS/JA3 handshake, not the User-Agent: the chrome131 wrapper's explicit
+  # cipher/curve/extension recipe is currently accepted, while the newer
+  # `--impersonate chrome142/146` profiles get the "Just a moment..." challenge.
+  # If Cloudflare starts flagging this handshake, switch to another profile whose
+  # fingerprint it accepts. amd64-only image, run under emulation on Apple Silicon.
+  @docker_image "lexiforest/curl-impersonate:latest"
+  @impersonate_target "curl_chrome131"
+
   @doc """
   Search for award flights between origin and destination on a specific date.
 
@@ -81,8 +90,11 @@ defmodule Awardflights.SasOffersApi do
     [
       "run",
       "--rm",
-      "lwthiker/curl-impersonate:0.6-chrome",
-      "curl_chrome110",
+      "--platform",
+      "linux/amd64",
+      "--entrypoint",
+      @impersonate_target,
+      @docker_image,
       "-s",
       "--max-time",
       "30",
@@ -164,30 +176,40 @@ defmodule Awardflights.SasOffersApi do
     # Strip Docker platform warnings (appears before JSON/XML on ARM Macs)
     stripped_output = strip_to_content(output)
 
-    # Check if response is XML (SAS returns XML errors sometimes)
-    if String.starts_with?(stripped_output, "<") do
-      # XML error response - treat as no availability
-      {:ok, []}
-    else
-      case Jason.decode(stripped_output) do
-        {:ok, %{"errors" => _errors}} ->
-          # SAS returns errors array when no availability - treat as empty results
-          {:ok, []}
+    cond do
+      # HTML/XML response. A Cloudflare challenge ("Just a moment...") is served
+      # as HTTP 200, so curl exits 0 and lands here. Never treat this as "no
+      # availability" - surface it so it is visible instead of silently empty.
+      String.starts_with?(stripped_output, "<") ->
+        if cloudflare_block?(output) do
+          {:error, :cloudflare_blocked}
+        else
+          {:error, {:unexpected_response, :html}}
+        end
 
-        {:ok, body} ->
-          flights = parse_flights(body, origin, destination, date)
-          {:ok, flights}
+      true ->
+        case Jason.decode(stripped_output) do
+          {:ok, %{"outboundFlights" => _} = body} ->
+            {:ok, parse_flights(body, origin, destination, date)}
 
-        {:error, _} ->
-          # Check if it's a Cloudflare block
-          if String.contains?(String.downcase(output), "cloudflare") do
-            {:error, :cloudflare_blocked}
-          else
-            {:error, {:json_parse_error, output}}
-          end
-      end
+          {:ok, %{"errors" => _errors}} ->
+            # SAS returns an errors array when there is no availability
+            {:ok, []}
+
+          {:ok, _body} ->
+            {:error, {:unexpected_response, :missing_outbound_flights}}
+
+          {:error, _} ->
+            if cloudflare_block?(output) do
+              {:error, :cloudflare_blocked}
+            else
+              {:error, {:json_parse_error, output}}
+            end
+        end
     end
   end
+
+  defp cloudflare_block?(output), do: String.contains?(String.downcase(output), "cloudflare")
 
   defp strip_to_content(output) do
     # Find the first { (JSON) or < (XML) character, whichever comes first
