@@ -58,8 +58,7 @@ const Hooks = {
       const formData = new FormData(this.el)
       const values = {}
 
-      // Persist only non-credential fields. Credentials live server-side
-      // (CredentialStore); storing them here is what used to drop them.
+      // Persist only non-credential fields; credentials live server-side (CredentialStore).
       for (const [key, value] of formData.entries()) {
         if (!key.startsWith("award_cred_") && !key.startsWith("offers_cred_")) {
           values[key] = value
