@@ -58,47 +58,12 @@ const Hooks = {
       const formData = new FormData(this.el)
       const values = {}
 
-      // Get regular text inputs (non-credential fields)
+      // Persist only non-credential fields. Credentials live server-side
+      // (CredentialStore); storing them here is what used to drop them.
       for (const [key, value] of formData.entries()) {
-        // Skip credential fields - we'll handle them separately
         if (!key.startsWith("award_cred_") && !key.startsWith("offers_cred_")) {
           values[key] = value
         }
-      }
-
-      // Collect award credentials from indexed form fields
-      const awardCredentials = []
-      let awardIndex = 0
-      while (true) {
-        const nameEl = this.el.querySelector(`[name="award_cred_name_${awardIndex}"]`)
-        const valueEl = this.el.querySelector(`[name="award_cred_value_${awardIndex}"]`)
-        if (!nameEl || !valueEl) break
-        awardCredentials.push({
-          name: nameEl.value,
-          value: valueEl.value
-        })
-        awardIndex++
-      }
-      if (awardCredentials.length > 0) {
-        values.award_credentials = awardCredentials
-      }
-
-      // Collect offers credentials from indexed form fields
-      const offersCredentials = []
-      let offersIndex = 0
-      while (true) {
-        const nameEl = this.el.querySelector(`[name="offers_cred_name_${offersIndex}"]`)
-        const cookiesEl = this.el.querySelector(`[name="offers_cred_cookies_${offersIndex}"]`)
-        if (!nameEl || !cookiesEl) break
-        offersCredentials.push({
-          name: nameEl.value,
-          cookies: cookiesEl.value,
-          auth_token: "" // auth_token is extracted from cookies server-side
-        })
-        offersIndex++
-      }
-      if (offersCredentials.length > 0) {
-        values.offers_credentials = offersCredentials
       }
 
       // Get checkbox states explicitly (unchecked checkboxes aren't in FormData)
