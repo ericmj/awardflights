@@ -14,6 +14,7 @@ defmodule Awardflights.Application do
       Awardflights.CsvWriter,
       Awardflights.RequestTracker,
       Awardflights.RateLimitTracker,
+      Awardflights.CredentialStore,
       {Task.Supervisor, name: Awardflights.TaskSupervisor},
       Awardflights.FlightScanner,
       # Start to serve requests, typically the last entry
