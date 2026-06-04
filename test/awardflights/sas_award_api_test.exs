@@ -267,6 +267,72 @@ defmodule Awardflights.SasAwardApiTest do
       assert length(flights) == 1
       assert hd(flights).cabin == "Business"
     end
+
+    test "parses live award shape: cabin name in `cabin`, points under price.SKY/BILATERAL" do
+      Req.Test.stub(Awardflights.SasAwardApi, fn conn ->
+        response = %{
+          "outboundFlights" => [
+            %{
+              "awardType" => "SKY",
+              "origin" => %{"code" => "CDG"},
+              "destination" => %{"code" => "JFK"},
+              "segments" => [
+                %{"marketingCarrier" => %{"name" => "Virgin Atlantic"}}
+              ],
+              "cabins" => [
+                %{
+                  "cabin" => "premium economy",
+                  "availableSeats" => 3,
+                  "price" => %{"SKY" => %{"points" => 63000}},
+                  "fares" => [
+                    %{"bookingClass" => "F", "avlSeats" => 3},
+                    %{"bookingClass" => "P", "avlSeats" => 3}
+                  ]
+                },
+                %{
+                  "cabin" => "business",
+                  "availableSeats" => 9,
+                  "price" => %{"SKY" => %{"points" => 84000}},
+                  "fares" => [
+                    %{"bookingClass" => "O", "avlSeats" => 9},
+                    %{"bookingClass" => "G", "avlSeats" => 5}
+                  ]
+                },
+                %{
+                  "cabin" => "economy",
+                  "availableSeats" => 9,
+                  "price" => %{"BILATERAL" => %{"points" => 42000}},
+                  "fares" => [
+                    %{"bookingClass" => "X", "avlSeats" => 9}
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+
+        Req.Test.json(conn, response)
+      end)
+
+      assert {:ok, flights} =
+               SasAwardApi.search_flights("CDG", "JFK", "2027-04-03", "session_cookie")
+
+      assert length(flights) == 3
+      [premium, business, economy] = flights
+
+      assert premium.cabin == "Premium Economy"
+      assert premium.booking_class == "F"
+      assert premium.available_tickets == 3
+      assert premium.points == 63000
+      assert premium.carriers == "Virgin Atlantic"
+
+      assert business.cabin == "Business"
+      assert business.points == 84000
+      assert business.available_tickets == 9
+
+      assert economy.cabin == "Economy"
+      assert economy.points == 42000
+    end
   end
 
   describe "JWT vs session cookie detection" do

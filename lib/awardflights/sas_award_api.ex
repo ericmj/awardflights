@@ -4,6 +4,8 @@ defmodule Awardflights.SasAwardApi do
   """
   require Logger
 
+  alias Awardflights.Cabin
+
   @base_url "https://www.sas.se/award-api/flights"
 
   @default_headers [
@@ -90,22 +92,18 @@ defmodule Awardflights.SasAwardApi do
   end
 
   defp parse_cabin(cabin, departure, arrival, date, carriers) do
-    # Check for Format 2 fields (session cookie auth)
-    points_v2 = get_in(cabin, ["price", "points"])
-
-    if points_v2 do
-      # Format 2: points at cabin level
-      parse_cabin_format2(cabin, departure, arrival, date, carriers)
+    if get_in(cabin, ["availableSeats"]) != nil or cabin_points(cabin) > 0 do
+      # Cabin-level pricing (session cookie / current shape)
+      parse_cabin_level(cabin, departure, arrival, date, carriers)
     else
-      # Format 1: points at fare level
-      parse_cabin_format1(cabin, departure, arrival, date, carriers)
+      # Fare-level pricing (bearer token shape)
+      parse_cabin_fares(cabin, departure, arrival, date, carriers)
     end
   end
 
-  # Format 1 (Bearer Token Auth):
-  # Points are in fares[].points.base
-  defp parse_cabin_format1(cabin, departure, arrival, date, carriers) do
-    cabin_name = get_in(cabin, ["cabinName"]) || "unknown"
+  # Bearer token shape: points are in fares[].points.base
+  defp parse_cabin_fares(cabin, departure, arrival, date, carriers) do
+    cabin_name = get_in(cabin, ["cabinName"])
     fares = get_in(cabin, ["fares"]) || []
 
     Enum.flat_map(fares, fn fare ->
@@ -113,11 +111,13 @@ defmodule Awardflights.SasAwardApi do
     end)
   end
 
-  # Format 2 (Session Cookie Auth):
-  # Points are in cabin.price.points, seats in cabin.availableSeats
-  defp parse_cabin_format2(cabin, departure, arrival, date, carriers) do
-    cabin_name = get_in(cabin, ["cabin"]) || get_in(cabin, ["productName"]) || "unknown"
-    points = get_in(cabin, ["price", "points"]) || 0
+  # Current/session shape: cabin name in `cabin`, seats in `availableSeats`,
+  # points in `price.points` or `price.<awardType>.points` (e.g. SKY, BILATERAL).
+  defp parse_cabin_level(cabin, departure, arrival, date, carriers) do
+    cabin_name =
+      get_in(cabin, ["cabin"]) || get_in(cabin, ["cabinName"]) || get_in(cabin, ["productName"])
+
+    points = cabin_points(cabin)
     available_seats = get_in(cabin, ["availableSeats"]) || 0
     fares = get_in(cabin, ["fares"]) || []
     booking_class = get_in(fares, [Access.at(0), "bookingClass"])
@@ -129,7 +129,7 @@ defmodule Awardflights.SasAwardApi do
           arrival: arrival,
           date: date,
           booking_class: booking_class,
-          cabin: format_cabin_name(cabin_name),
+          cabin: format_cabin(cabin_name),
           available_tickets: available_seats,
           points: points,
           carriers: carriers
@@ -140,6 +140,18 @@ defmodule Awardflights.SasAwardApi do
     end
   end
 
+  # Points may sit directly under price or nested per award type (SKY, BILATERAL).
+  defp cabin_points(cabin) do
+    price = get_in(cabin, ["price"]) || %{}
+
+    get_in(price, ["points"]) ||
+      get_in(price, ["SKY", "points"]) ||
+      get_in(price, ["BILATERAL", "points"]) || 0
+  end
+
+  defp format_cabin(nil), do: "unknown"
+  defp format_cabin(name), do: Cabin.format_name(name)
+
   defp extract_carriers(flight) do
     segments = get_in(flight, ["segments"]) || []
 
@@ -149,12 +161,6 @@ defmodule Awardflights.SasAwardApi do
     |> Enum.uniq()
     |> Enum.join(", ")
   end
-
-  defp format_cabin_name(name) when is_binary(name) do
-    name |> String.downcase() |> String.capitalize()
-  end
-
-  defp format_cabin_name(_), do: "Unknown"
 
   defp parse_fare(fare, departure, arrival, date, cabin_name, carriers) do
     booking_class = get_in(fare, ["bookingClass"])
@@ -168,7 +174,7 @@ defmodule Awardflights.SasAwardApi do
           arrival: arrival,
           date: date,
           booking_class: booking_class,
-          cabin: cabin_name,
+          cabin: format_cabin(cabin_name),
           available_tickets: available_seats,
           points: points,
           carriers: carriers

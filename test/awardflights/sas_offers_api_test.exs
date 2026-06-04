@@ -109,6 +109,46 @@ defmodule Awardflights.SasOffersApiTest do
       assert business_z.available_tickets == 2
     end
 
+    test "title-cases multi-word cabin names (premium economy)" do
+      response =
+        Jason.encode!(%{
+          "outboundFlights" => %{
+            "F1" => %{
+              "origin" => %{"code" => "GOT"},
+              "destination" => %{"code" => "EWR"},
+              "cabins" => %{
+                "PREMIUM ECONOMY" => %{
+                  "STANDARD" => %{
+                    "products" => %{
+                      "R_1" => %{
+                        "price" => %{"points" => 45000, "basePrice" => 0},
+                        "fares" => [
+                          %{"bookingClass" => "R", "avlSeats" => 4}
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        })
+
+      setup_mock(response, 0)
+
+      assert {:ok, [flight]} =
+               SasOffersApi.search_flights(
+                 "GOT",
+                 "EWR",
+                 "2026-03-01",
+                 "cookies",
+                 make_jwt("sess")
+               )
+
+      assert flight.cabin == "Premium Economy"
+      assert flight.booking_class == "R"
+    end
+
     test "filters out products with zero available seats" do
       response =
         Jason.encode!(%{

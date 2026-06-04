@@ -4,6 +4,8 @@ defmodule Awardflights.SasOffersApi do
   to bypass Cloudflare TLS fingerprinting.
   """
 
+  alias Awardflights.Cabin
+
   @base_url "https://www.sas.se/api/offers/flights"
 
   @doc """
@@ -269,7 +271,7 @@ defmodule Awardflights.SasOffersApi do
             arrival: arrival,
             date: date,
             booking_class: booking_class,
-            cabin: format_cabin_name(cabin_name),
+            cabin: Cabin.format_name(cabin_name),
             available_tickets: available_seats,
             points: points,
             carriers: carriers
@@ -290,12 +292,6 @@ defmodule Awardflights.SasOffersApi do
     |> Enum.uniq()
     |> Enum.join(", ")
   end
-
-  defp format_cabin_name(name) when is_binary(name) do
-    name |> String.downcase() |> String.capitalize()
-  end
-
-  defp format_cabin_name(_), do: "Unknown"
 
   defp extract_cookie_value(cookie_string, name) when is_binary(cookie_string) do
     cookie_string
