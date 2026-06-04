@@ -1,7 +1,7 @@
 defmodule AwardflightsWeb.ScannerLive do
   use AwardflightsWeb, :live_view
 
-  alias Awardflights.{FlightScanner, RateLimitTracker}
+  alias Awardflights.{CredentialStore, FlightScanner, RateLimitTracker}
 
   @impl true
   def mount(_params, _session, socket) do
@@ -20,10 +20,9 @@ defmodule AwardflightsWeb.ScannerLive do
        destinations: "",
        start_date: Date.to_string(Date.utc_today()),
        end_date: Date.to_string(Date.add(Date.utc_today(), 7)),
-       # Credential lists: [{name: "", value: ""}, ...]
-       award_credentials: [%{name: "Default", value: ""}],
-       # Offers credentials: [{name: "", cookies: "", auth_token: ""}, ...]
-       offers_credentials: [],
+       # Credential lists loaded from the server-side store
+       award_credentials: load_award_credentials(),
+       offers_credentials: load_offers_credentials(),
        max_concurrency: 1,
        skip_days: 0,
        scanning: status.scanning,
@@ -52,58 +51,12 @@ defmodule AwardflightsWeb.ScannerLive do
 
   @impl true
   def handle_event("restore_form", params, socket) do
-    # Restore saved form values from localStorage
-    # Handle migration from old single-credential format
-    award_credentials =
-      case params["award_credentials"] do
-        nil ->
-          # Check for old format auth_token
-          case params["auth_token"] do
-            nil -> socket.assigns.award_credentials
-            "" -> socket.assigns.award_credentials
-            token -> [%{name: "Default", value: token}]
-          end
-
-        creds when is_list(creds) ->
-          Enum.map(creds, fn c ->
-            %{name: c["name"] || "Default", value: c["value"] || ""}
-          end)
-      end
-
-    offers_credentials =
-      case params["offers_credentials"] do
-        nil ->
-          # Check for old format offers_cookies
-          case params["offers_cookies"] do
-            nil ->
-              socket.assigns.offers_credentials
-
-            "" ->
-              socket.assigns.offers_credentials
-
-            cookies ->
-              auth_token = params["offers_auth_token"] || ""
-              [%{name: "Default", cookies: cookies, auth_token: auth_token}]
-          end
-
-        creds when is_list(creds) ->
-          Enum.map(creds, fn c ->
-            %{
-              name: c["name"] || "Default",
-              cookies: c["cookies"] || "",
-              auth_token: c["auth_token"] || ""
-            }
-          end)
-      end
-
     {:noreply,
      assign(socket,
        origins: params["origins"] || socket.assigns.origins,
        destinations: params["destinations"] || socket.assigns.destinations,
        start_date: params["start_date"] || socket.assigns.start_date,
        end_date: params["end_date"] || socket.assigns.end_date,
-       award_credentials: award_credentials,
-       offers_credentials: offers_credentials,
        max_concurrency: parse_int(params["max_concurrency"], socket.assigns.max_concurrency),
        skip_days: parse_int(params["skip_days"], socket.assigns.skip_days)
      )}
@@ -128,6 +81,9 @@ defmodule AwardflightsWeb.ScannerLive do
         "offers_cred",
         [:name, :cookies, :auth_token]
       )
+
+    CredentialStore.put_all(:award, award_to_store(award_credentials))
+    CredentialStore.put_all(:offers, offers_to_store(offers_credentials))
 
     {:noreply,
      assign(socket,
@@ -234,17 +190,17 @@ defmodule AwardflightsWeb.ScannerLive do
   @impl true
   def handle_event("add_award_credential", _params, socket) do
     new_credential = %{name: "Account #{length(socket.assigns.award_credentials) + 1}", value: ""}
-
-    {:noreply,
-     assign(socket, award_credentials: socket.assigns.award_credentials ++ [new_credential])}
+    credentials = socket.assigns.award_credentials ++ [new_credential]
+    CredentialStore.put_all(:award, award_to_store(credentials))
+    {:noreply, assign(socket, award_credentials: credentials)}
   end
 
   @impl true
   def handle_event("remove_award_credential", %{"index" => index}, socket) do
     index = String.to_integer(index)
     credentials = List.delete_at(socket.assigns.award_credentials, index)
-    # Ensure at least one credential exists
     credentials = if credentials == [], do: [%{name: "Default", value: ""}], else: credentials
+    CredentialStore.put_all(:award, award_to_store(credentials))
     {:noreply, assign(socket, award_credentials: credentials)}
   end
 
@@ -256,14 +212,16 @@ defmodule AwardflightsWeb.ScannerLive do
       auth_token: ""
     }
 
-    {:noreply,
-     assign(socket, offers_credentials: socket.assigns.offers_credentials ++ [new_credential])}
+    credentials = socket.assigns.offers_credentials ++ [new_credential]
+    CredentialStore.put_all(:offers, offers_to_store(credentials))
+    {:noreply, assign(socket, offers_credentials: credentials)}
   end
 
   @impl true
   def handle_event("remove_offers_credential", %{"index" => index}, socket) do
     index = String.to_integer(index)
     credentials = List.delete_at(socket.assigns.offers_credentials, index)
+    CredentialStore.put_all(:offers, offers_to_store(credentials))
     {:noreply, assign(socket, offers_credentials: credentials)}
   end
 
@@ -500,6 +458,21 @@ defmodule AwardflightsWeb.ScannerLive do
   end
 
   defp progress_percentage(_, _), do: 0
+
+  defp load_award_credentials do
+    case CredentialStore.list(:award) do
+      [] -> [%{name: "Default", value: ""}]
+      creds -> Enum.map(creds, &%{name: &1.name, value: &1.value})
+    end
+  end
+
+  defp load_offers_credentials do
+    CredentialStore.list(:offers)
+    |> Enum.map(&%{name: &1.name, cookies: &1.value, auth_token: ""})
+  end
+
+  defp award_to_store(creds), do: Enum.map(creds, &%{name: &1.name, value: &1.value})
+  defp offers_to_store(creds), do: Enum.map(creds, &%{name: &1.name, value: &1.cookies})
 
   # Update credentials from indexed form params (e.g., award_cred_name_0, award_cred_value_0)
   defp update_credentials_from_params(credentials, params, prefix, fields) do

@@ -29,12 +29,20 @@ defmodule AwardflightsWeb.ScannerLiveTest do
     # Set up the Req test plug
     Application.put_env(:awardflights, :sas_award_api_plug, {Req.Test, Awardflights.SasAwardApi})
 
+    tmp_creds =
+      Path.join(System.tmp_dir!(), "credentials_test_#{System.unique_integer([:positive])}.csv")
+
+    Application.put_env(:awardflights, :credentials_file, tmp_creds)
+    Awardflights.CredentialStore.clear_all()
+
     on_exit(fn ->
       FlightScanner.stop_scan()
       Application.delete_env(:awardflights, :sas_award_api_plug)
       File.rm(results_file())
       File.rm(failed_file())
       File.rm(rate_limits_file())
+      File.rm(tmp_creds)
+      Application.delete_env(:awardflights, :credentials_file)
     end)
 
     :ok
@@ -315,6 +323,33 @@ defmodule AwardflightsWeb.ScannerLiveTest do
 
       # With only one credential, there should be no Remove button
       refute html =~ "remove_award_credential"
+    end
+  end
+
+  describe "credential persistence" do
+    test "loads saved credentials from the store on mount", %{conn: conn} do
+      Awardflights.CredentialStore.put_all(:award, [%{name: "Saved Award", value: "saved_tok"}])
+
+      Awardflights.CredentialStore.put_all(:offers, [
+        %{name: "Saved Offers", value: "saved_cookie"}
+      ])
+
+      {:ok, _view, html} = live(conn, "/")
+
+      assert html =~ "Saved Award"
+      assert html =~ "saved_tok"
+      assert html =~ "Saved Offers"
+      assert html =~ "saved_cookie"
+    end
+
+    test "adding a credential persists it to the store", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      view
+      |> element("button[phx-click=add_award_credential]")
+      |> render_click()
+
+      assert length(Awardflights.CredentialStore.list(:award)) == 2
     end
   end
 end
