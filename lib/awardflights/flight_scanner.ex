@@ -68,6 +68,13 @@ defmodule Awardflights.FlightScanner do
       {:reply, {:error, :already_scanning}, state}
     else
       new_state = setup_scan(config)
+
+      broadcast(:scan_started, %{
+        total: new_state.total,
+        origins: new_state.origins,
+        destinations: new_state.destinations
+      })
+
       send(self(), :spawn_workers)
       {:reply, :ok, new_state}
     end
@@ -162,11 +169,11 @@ defmodule Awardflights.FlightScanner do
 
   @impl true
   def handle_info(
-        {:scan_result, source, _origin, _destination, _date, _credential_index, _result},
+        {:scan_result, source, _origin, _destination, _date, credential_index, _result},
         %{scanning: false} = state
       ) do
     # Scan was stopped, ignore result
-    new_state = decrement_in_flight(state, source)
+    new_state = free_credential(state, source, credential_index)
     {:noreply, new_state}
   end
 
@@ -175,7 +182,7 @@ defmodule Awardflights.FlightScanner do
         {:scan_result, source, origin, destination, date, credential_index, result},
         state
       ) do
-    new_state = decrement_in_flight(state, source)
+    new_state = free_credential(state, source, credential_index)
 
     case result do
       {:ok, flights} ->
@@ -294,8 +301,8 @@ defmodule Awardflights.FlightScanner do
   end
 
   @impl true
-  def handle_info({:skipped, source, origin, destination, date}, state) do
-    new_state = decrement_in_flight(state, source)
+  def handle_info({:skipped, source, origin, destination, date, credential_index}, state) do
+    new_state = free_credential(state, source, credential_index)
 
     new_state = %{
       new_state
@@ -317,6 +324,28 @@ defmodule Awardflights.FlightScanner do
 
     maybe_finish_scan(new_state)
   end
+
+  # Backward-compat for tasks spawned before a hot code reload (5-tuple skipped,
+  # no credential index). Count it and keep going without touching the busy set.
+  @impl true
+  def handle_info({:skipped, source, origin, destination, date}, state) do
+    new_state = %{state | skipped_count: state.skipped_count + 1, completed: state.completed + 1}
+
+    broadcast(:request_skipped, %{
+      source: source,
+      origin: origin,
+      destination: destination,
+      date: date
+    })
+
+    broadcast_progress(new_state)
+    send(self(), spawn_message_for(source))
+    maybe_finish_scan(new_state)
+  end
+
+  # Safety net: ignore any unrecognized message rather than crash the scanner.
+  @impl true
+  def handle_info(_msg, state), do: {:noreply, state}
 
   # Private functions
 
@@ -343,49 +372,59 @@ defmodule Awardflights.FlightScanner do
   end
 
   defp do_spawn_award_workers_inner(state) do
-    # Find an available credential
-    case find_available_credential(state.award_credentials, state.award_active_index) do
-      {:all_unavailable, _earliest} ->
-        # All credentials are unavailable (rate limited or expired), skip spawning
-        state
+    busy = Map.get(state, :award_busy, MapSet.new())
+    slots = state.max_concurrency - MapSet.size(busy)
+    avail = available_credential_indices(state.award_credentials, busy)
+    n = Enum.min([slots, length(avail), length(state.award_queue)])
 
-      {:ok, credential, index} ->
-        # Update state with any credential changes (cleared rate limits) and active index
-        updated_credentials = List.replace_at(state.award_credentials, index, credential)
-        state = %{state | award_credentials: updated_credentials, award_active_index: index}
+    if n <= 0 do
+      state
+    else
+      {to_process, remaining_queue} = Enum.split(state.award_queue, n)
+      state = %{state | award_queue: remaining_queue}
 
-        available_slots = state.max_concurrency - state.award_in_flight
-        {to_process, remaining_queue} = Enum.split(state.award_queue, available_slots)
-
-        new_state = %{state | award_queue: remaining_queue}
-
-        Enum.reduce(to_process, new_state, fn {origin, destination, date}, acc ->
-          spawn_award_task(self(), origin, destination, date, acc, acc.skip_days)
-        end)
+      to_process
+      |> Enum.zip(Enum.take(avail, n))
+      |> Enum.reduce(state, fn {{origin, destination, date}, index}, acc ->
+        spawn_award_task(self(), origin, destination, date, acc, acc.skip_days, index)
+      end)
     end
   end
 
   defp do_spawn_offers_workers_inner(state) do
-    # Find an available credential
-    case find_available_credential(state.offers_credentials, state.offers_active_index) do
-      {:all_unavailable, _earliest} ->
-        # All credentials are unavailable (rate limited or expired), skip spawning
-        state
+    busy = Map.get(state, :offers_busy, MapSet.new())
+    slots = state.max_concurrency - MapSet.size(busy)
+    avail = available_credential_indices(state.offers_credentials, busy)
+    n = Enum.min([slots, length(avail), length(state.offers_queue)])
 
-      {:ok, credential, index} ->
-        # Update state with any credential changes (cleared rate limits) and active index
-        updated_credentials = List.replace_at(state.offers_credentials, index, credential)
-        state = %{state | offers_credentials: updated_credentials, offers_active_index: index}
+    if n <= 0 do
+      state
+    else
+      {to_process, remaining_queue} = Enum.split(state.offers_queue, n)
+      state = %{state | offers_queue: remaining_queue}
 
-        available_slots = state.max_concurrency - state.offers_in_flight
-        {to_process, remaining_queue} = Enum.split(state.offers_queue, available_slots)
-
-        new_state = %{state | offers_queue: remaining_queue}
-
-        Enum.reduce(to_process, new_state, fn {origin, destination, date}, acc ->
-          spawn_offers_task(self(), origin, destination, date, acc, acc.skip_days)
-        end)
+      to_process
+      |> Enum.zip(Enum.take(avail, n))
+      |> Enum.reduce(state, fn {{origin, destination, date}, index}, acc ->
+        spawn_offers_task(self(), origin, destination, date, acc, acc.skip_days, index)
+      end)
     end
+  end
+
+  # Credential indices usable right now: not busy, not expired, not rate limited.
+  # max_concurrency then bounds how many of these run in parallel (one request each).
+  defp available_credential_indices(credentials, busy) do
+    now = DateTime.utc_now()
+
+    credentials
+    |> Enum.with_index()
+    |> Enum.filter(fn {cred, idx} ->
+      not MapSet.member?(busy, idx) and
+        not Map.get(cred, :expired, false) and
+        (cred.rate_limited_until == nil or
+           DateTime.compare(now, cred.rate_limited_until) == :gt)
+    end)
+    |> Enum.map(fn {_cred, idx} -> idx end)
   end
 
   defp maybe_finish_scan(state) do
@@ -401,12 +440,14 @@ defmodule Awardflights.FlightScanner do
     end
   end
 
-  defp decrement_in_flight(state, :award) do
-    %{state | award_in_flight: max(0, state.award_in_flight - 1)}
+  defp free_credential(state, :award, credential_index) do
+    busy = MapSet.delete(Map.get(state, :award_busy, MapSet.new()), credential_index)
+    %{state | award_busy: busy, award_in_flight: MapSet.size(busy)}
   end
 
-  defp decrement_in_flight(state, :offers) do
-    %{state | offers_in_flight: max(0, state.offers_in_flight - 1)}
+  defp free_credential(state, :offers, credential_index) do
+    busy = MapSet.delete(Map.get(state, :offers_busy, MapSet.new()), credential_index)
+    %{state | offers_busy: busy, offers_in_flight: MapSet.size(busy)}
   end
 
   defp spawn_message_for(:award), do: {:spawn_award_workers}
@@ -539,6 +580,9 @@ defmodule Awardflights.FlightScanner do
       offers_queue: [],
       award_in_flight: 0,
       offers_in_flight: 0,
+      # Credential indices with an in-flight request (one request per credential)
+      award_busy: MapSet.new(),
+      offers_busy: MapSet.new(),
       # Separate current scan tracking per API
       award_current: nil,
       offers_current: nil,
@@ -627,6 +671,8 @@ defmodule Awardflights.FlightScanner do
       offers_queue: offers_queue,
       award_in_flight: 0,
       offers_in_flight: 0,
+      award_busy: MapSet.new(),
+      offers_busy: MapSet.new(),
       award_current: nil,
       offers_current: nil,
       completed: 0,
@@ -662,36 +708,37 @@ defmodule Awardflights.FlightScanner do
     end
   end
 
-  defp spawn_award_task(scanner, origin, destination, date, state, skip_days) do
-    credential_index = state.award_active_index
+  defp spawn_award_task(scanner, origin, destination, date, state, skip_days, credential_index) do
     credential = Enum.at(state.award_credentials, credential_index)
     auth_token = credential.value
 
     Task.Supervisor.start_child(Awardflights.TaskSupervisor, fn ->
       if RequestTracker.should_skip?(:award, origin, destination, date, skip_days) do
-        send(scanner, {:skipped, :award, origin, destination, date})
+        send(scanner, {:skipped, :award, origin, destination, date, credential_index})
       else
         result = SasAwardApi.search_flights(origin, destination, date, auth_token)
         send(scanner, {:scan_result, :award, origin, destination, date, credential_index, result})
       end
     end)
 
+    busy = MapSet.put(Map.get(state, :award_busy, MapSet.new()), credential_index)
+
     %{
       state
-      | award_in_flight: state.award_in_flight + 1,
+      | award_busy: busy,
+        award_in_flight: MapSet.size(busy),
         award_current: {origin, destination, date}
     }
   end
 
-  defp spawn_offers_task(scanner, origin, destination, date, state, skip_days) do
-    credential_index = state.offers_active_index
+  defp spawn_offers_task(scanner, origin, destination, date, state, skip_days, credential_index) do
     credential = Enum.at(state.offers_credentials, credential_index)
     cookies = credential.cookies
     auth_token = credential.auth_token
 
     Task.Supervisor.start_child(Awardflights.TaskSupervisor, fn ->
       if RequestTracker.should_skip?(:offers, origin, destination, date, skip_days) do
-        send(scanner, {:skipped, :offers, origin, destination, date})
+        send(scanner, {:skipped, :offers, origin, destination, date, credential_index})
       else
         result = SasOffersApi.search_flights(origin, destination, date, cookies, auth_token)
 
@@ -702,9 +749,12 @@ defmodule Awardflights.FlightScanner do
       end
     end)
 
+    busy = MapSet.put(Map.get(state, :offers_busy, MapSet.new()), credential_index)
+
     %{
       state
-      | offers_in_flight: state.offers_in_flight + 1,
+      | offers_busy: busy,
+        offers_in_flight: MapSet.size(busy),
         offers_current: {origin, destination, date}
     }
   end

@@ -264,6 +264,31 @@ defmodule AwardflightsWeb.ScannerLive do
   end
 
   @impl true
+  def handle_info({:scan_started, _payload}, socket) do
+    status = FlightScanner.get_status()
+
+    {:noreply,
+     assign(socket,
+       scanning: true,
+       results: [],
+       last_error: nil,
+       completed: status.completed,
+       total: status.total,
+       results_count: status.results_count,
+       award_results_count: Map.get(status, :award_results_count, 0),
+       offers_results_count: Map.get(status, :offers_results_count, 0),
+       errors_count: status.errors_count,
+       skipped_count: status.skipped_count,
+       award_paused_until: status.award_paused_until,
+       offers_paused_until: status.offers_paused_until,
+       award_credential_statuses: Map.get(status, :award_credentials, []),
+       offers_credential_statuses: Map.get(status, :offers_credentials, []),
+       award_active_index: Map.get(status, :award_active_index, 0),
+       offers_active_index: Map.get(status, :offers_active_index, 0)
+     )}
+  end
+
+  @impl true
   def handle_info({:scan_complete, _payload}, socket) do
     {:noreply, assign(socket, scanning: false)}
   end

@@ -21,8 +21,11 @@ defmodule AwardflightsWeb.Router do
     live "/trips", TripsLive
   end
 
-  # Other scopes may use custom stacks.
-  # scope "/api", AwardflightsWeb do
-  #   pipe_through :api
-  # end
+  scope "/api", AwardflightsWeb do
+    pipe_through :api
+
+    post "/scan", ScanController, :create
+    post "/scan/stop", ScanController, :stop
+    get "/scan/status", ScanController, :status
+  end
 end
