@@ -306,6 +306,8 @@ defmodule Awardflights.TripCorrelator do
   defp valid_return?(outbound, return, min_days, max_days) do
     return.date != nil and
       outbound.date != nil and
+      return.departure == outbound.arrival and
+      return.arrival == outbound.departure and
       Date.diff(return.date, outbound.date) >= min_days and
       Date.diff(return.date, outbound.date) <= max_days
   end

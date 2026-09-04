@@ -391,9 +391,8 @@ defmodule Awardflights.TripCorrelatorTest do
 
       trips = TripCorrelator.find_trips(opts)
 
-      # Should find GOT->CDG with CDG->GOT and GOT->CDG with LHR->ARN
-      # and ARN->LHR with CDG->GOT and ARN->LHR with LHR->ARN
-      assert length(trips) == 4
+      # Routes must reverse: GOT->CDG pairs only with CDG->GOT, ARN->LHR only with LHR->ARN
+      assert length(trips) == 2
     end
   end
 end
