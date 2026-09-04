@@ -1,0 +1,16 @@
+{
+  "name": "sas-cookie-capture",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Capture SAS session cookies from a logged-in browser profile and write them into credentials.csv for the awardflights scanner.",
+  "bin": {
+    "sas-cookies": "capture-cookies.mjs"
+  },
+  "scripts": {
+    "start": "node capture-cookies.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0"
+  }
+}
