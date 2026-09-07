@@ -4,7 +4,7 @@ defmodule Awardflights.SasOffersApi do
   to bypass Cloudflare TLS fingerprinting.
   """
 
-  alias Awardflights.Cabin
+  alias Awardflights.{Cabin, Itinerary}
 
   @base_url "https://www.sas.se/api/offers/flights"
 
@@ -246,34 +246,34 @@ defmodule Awardflights.SasOffersApi do
     departure = get_in(flight, ["origin", "code"]) || origin
     arrival = get_in(flight, ["destination", "code"]) || destination
     cabins = get_in(flight, ["cabins"]) || %{}
-    carriers = extract_carriers(flight)
+    itinerary = Itinerary.from_flight(flight)
 
     cabins
     |> Enum.flat_map(fn {cabin_name, cabin_types} ->
-      parse_cabin_types(cabin_types, cabin_name, departure, arrival, date, carriers)
+      parse_cabin_types(cabin_types, cabin_name, departure, arrival, date, itinerary)
     end)
   end
 
-  defp parse_cabin_types(cabin_types, cabin_name, departure, arrival, date, carriers)
+  defp parse_cabin_types(cabin_types, cabin_name, departure, arrival, date, itinerary)
        when is_map(cabin_types) do
     cabin_types
     |> Enum.flat_map(fn {_type_name, type_data} ->
-      parse_products(type_data, cabin_name, departure, arrival, date, carriers)
+      parse_products(type_data, cabin_name, departure, arrival, date, itinerary)
     end)
   end
 
   defp parse_cabin_types(_, _, _, _, _, _), do: []
 
-  defp parse_products(%{"products" => products}, cabin_name, departure, arrival, date, carriers)
+  defp parse_products(%{"products" => products}, cabin_name, departure, arrival, date, itinerary)
        when is_map(products) do
     products
     |> Map.values()
-    |> Enum.flat_map(&parse_product(&1, cabin_name, departure, arrival, date, carriers))
+    |> Enum.flat_map(&parse_product(&1, cabin_name, departure, arrival, date, itinerary))
   end
 
   defp parse_products(_, _, _, _, _, _), do: []
 
-  defp parse_product(product, cabin_name, departure, arrival, date, carriers) do
+  defp parse_product(product, cabin_name, departure, arrival, date, itinerary) do
     points = get_in(product, ["price", "points"]) || 0
     base_price = get_in(product, ["price", "basePrice"]) || 0
     fares = get_in(product, ["fares"]) || []
@@ -287,7 +287,7 @@ defmodule Awardflights.SasOffersApi do
       # Points-only awards have basePrice of 0 (only taxes), while mixed pricing has positive basePrice
       if available_seats > 0 and points > 0 and base_price == 0 do
         [
-          %{
+          Map.merge(itinerary, %{
             source: :offers,
             departure: departure,
             arrival: arrival,
@@ -295,24 +295,13 @@ defmodule Awardflights.SasOffersApi do
             booking_class: booking_class,
             cabin: Cabin.format_name(cabin_name),
             available_tickets: available_seats,
-            points: points,
-            carriers: carriers
-          }
+            points: points
+          })
         ]
       else
         []
       end
     end)
-  end
-
-  defp extract_carriers(flight) do
-    segments = get_in(flight, ["segments"]) || []
-
-    segments
-    |> Enum.map(&get_in(&1, ["marketingCarrier", "name"]))
-    |> Enum.reject(&is_nil/1)
-    |> Enum.uniq()
-    |> Enum.join(", ")
   end
 
   defp extract_cookie_value(cookie_string, name) when is_binary(cookie_string) do

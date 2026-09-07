@@ -335,6 +335,188 @@ defmodule Awardflights.SasAwardApiTest do
     end
   end
 
+  describe "itinerary details" do
+    test "includes segments, stops, times, durations and operating carriers" do
+      Req.Test.stub(Awardflights.SasAwardApi, fn conn ->
+        response = %{
+          "outboundFlights" => [
+            %{
+              "origin" => %{"code" => "GOT"},
+              "destination" => %{"code" => "EWR"},
+              "connectionDuration" => "10:54:00",
+              "startTimeInLocal" => "2026-09-04T10:05:00.000+02:00",
+              "endTimeInLocal" => "2026-09-04T14:59:00.000-04:00",
+              "stops" => 1,
+              "via" => [%{"code" => "CPH", "haltDuration" => "01:40:00"}],
+              "segments" => [
+                %{
+                  "flightNumber" => "443",
+                  "departureAirport" => %{"code" => "GOT"},
+                  "arrivalAirport" => %{"code" => "CPH"},
+                  "departureDateTimeInLocal" => "2026-09-04T10:05:00.000+02:00",
+                  "arrivalDateTimeInLocal" => "2026-09-04T10:50:00.000+02:00",
+                  "duration" => "00:45:00",
+                  "marketingCarrier" => %{"code" => "SK", "name" => "SAS"},
+                  "operatingCarrier" => %{"code" => "X1", "name" => "SAS Connect"}
+                },
+                %{
+                  "flightNumber" => "909",
+                  "departureAirport" => %{"code" => "CPH"},
+                  "arrivalAirport" => %{"code" => "EWR"},
+                  "departureDateTimeInLocal" => "2026-09-04T12:30:00.000+02:00",
+                  "arrivalDateTimeInLocal" => "2026-09-04T14:59:00.000-04:00",
+                  "duration" => "08:29:00",
+                  "marketingCarrier" => %{"code" => "SK", "name" => "SAS"}
+                }
+              ],
+              "cabins" => [
+                %{
+                  "cabin" => "economy",
+                  "availableSeats" => 9,
+                  "price" => %{"points" => 42000},
+                  "fares" => [%{"bookingClass" => "X", "avlSeats" => 9}]
+                }
+              ]
+            }
+          ]
+        }
+
+        Req.Test.json(conn, response)
+      end)
+
+      assert {:ok, [flight]} =
+               SasAwardApi.search_flights("GOT", "EWR", "2026-09-04", "session_cookie")
+
+      assert flight.departure == "GOT"
+      assert flight.arrival == "EWR"
+      assert flight.carriers == "SAS"
+      assert flight.operating_carriers == "SAS Connect, SAS"
+      assert flight.departure_time == "2026-09-04T10:05:00+02:00"
+      assert flight.arrival_time == "2026-09-04T14:59:00-04:00"
+      assert flight.duration == 654
+      assert flight.stops == [%Awardflights.Itinerary.Stop{airport: "CPH", duration: 100}]
+
+      assert [first, second] = flight.segments
+      assert first.flight_number == "SK443"
+      assert first.departure == "GOT"
+      assert first.arrival == "CPH"
+      assert first.departure_time == "2026-09-04T10:05:00+02:00"
+      assert first.arrival_time == "2026-09-04T10:50:00+02:00"
+      assert first.duration == 45
+      assert first.marketing_carrier == "SAS"
+      assert first.operating_carrier == "SAS Connect"
+      assert second.flight_number == "SK909"
+      assert second.duration == 509
+      assert second.operating_carrier == "SAS"
+    end
+
+    test "parses the live award shape: local times, \"2h 20m\" durations, segment layovers" do
+      Req.Test.stub(Awardflights.SasAwardApi, fn conn ->
+        response = %{
+          "outboundFlights" => [
+            %{
+              "awardType" => "SKY",
+              "origin" => %{"code" => "GOT"},
+              "destination" => %{"code" => "ORD"},
+              "connectionDuration" => "16h 15m",
+              "totalDuration" => "16h 15m",
+              "startTimeInLocal" => "05:55",
+              "endTimeInLocal" => "15:10",
+              "startDateTimeInLocal" => "2026-10-15T05:55:00",
+              "endDateTimeInLocal" => "2026-10-15T15:10:00",
+              "stops" => 1,
+              "via" => [%{"code" => "CDG", "haltDuration" => "4h 55m"}],
+              "segments" => [
+                %{
+                  "flightNumber" => "1553",
+                  "departureAirport" => %{"code" => "GOT"},
+                  "arrivalAirport" => %{"code" => "CDG"},
+                  "departureDateTimeInLocal" => "2026-10-15T05:55:00",
+                  "arrivalDateTimeInLocal" => "2026-10-15T08:15:00",
+                  "duration" => "2h 20m",
+                  "layoverDuration" => "4h 55m",
+                  "marketingCarrier" => %{"code" => "AF", "name" => "Air France"},
+                  "operatingCarrier" => %{"code" => "A5", "name" => "Air France Hop"}
+                },
+                %{
+                  "flightNumber" => "136",
+                  "departureAirport" => %{"code" => "CDG"},
+                  "arrivalAirport" => %{"code" => "ORD"},
+                  "departureDateTimeInLocal" => "2026-10-15T13:10:00",
+                  "arrivalDateTimeInLocal" => "2026-10-15T15:10:00",
+                  "duration" => "9h",
+                  "layoverDuration" => "",
+                  "marketingCarrier" => %{"code" => "AF", "name" => "Air France"},
+                  "operatingCarrier" => %{"code" => "AF", "name" => "Air France"}
+                }
+              ],
+              "cabins" => [
+                %{
+                  "cabin" => "economy",
+                  "availableSeats" => 9,
+                  "price" => %{"SKY" => %{"points" => 42000}},
+                  "fares" => [
+                    %{"bookingClass" => "X", "avlSeats" => 9},
+                    %{"bookingClass" => "X", "avlSeats" => 9}
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+
+        Req.Test.json(conn, response)
+      end)
+
+      assert {:ok, [flight]} =
+               SasAwardApi.search_flights("GOT", "ORD", "2026-10-15", "session_cookie")
+
+      assert flight.cabin == "Economy"
+      assert flight.booking_class == "X"
+      assert flight.available_tickets == 9
+      assert flight.points == 42000
+      assert flight.carriers == "Air France"
+      assert flight.operating_carriers == "Air France Hop, Air France"
+      assert flight.departure_time == "2026-10-15T05:55:00"
+      assert flight.arrival_time == "2026-10-15T15:10:00"
+      assert flight.duration == 975
+      assert flight.stops == [%Awardflights.Itinerary.Stop{airport: "CDG", duration: 295}]
+      assert Enum.map(flight.segments, & &1.flight_number) == ["AF1553", "AF136"]
+      assert Enum.map(flight.segments, & &1.duration) == [140, 540]
+    end
+
+    test "returns empty itinerary fields when the response has no segments" do
+      Req.Test.stub(Awardflights.SasAwardApi, fn conn ->
+        Req.Test.json(conn, %{
+          "outboundFlights" => [
+            %{
+              "origin" => %{"code" => "GOT"},
+              "destination" => %{"code" => "CDG"},
+              "cabins" => [
+                %{
+                  "cabinName" => "Economy",
+                  "fares" => [
+                    %{"bookingClass" => "X", "avlSeats" => 9, "points" => %{"base" => 24000}}
+                  ]
+                }
+              ]
+            }
+          ]
+        })
+      end)
+
+      assert {:ok, [flight]} =
+               SasAwardApi.search_flights("GOT", "CDG", "2026-01-23", "test_token")
+
+      assert flight.carriers == ""
+      assert flight.operating_carriers == ""
+      assert flight.departure_time == nil
+      assert flight.duration == nil
+      assert flight.segments == []
+      assert flight.stops == []
+    end
+  end
+
   describe "JWT vs session cookie detection" do
     test "JWT with customerSessionId uses Bearer auth with hardcoded session ID" do
       # Real JWT structure with customerSessionId in payload

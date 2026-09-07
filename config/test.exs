@@ -25,5 +25,6 @@ config :phoenix,
 config :awardflights,
   results_file: "tmp/test_results.csv",
   failed_file: "tmp/test_failed_requests.csv",
+  trips_file: "tmp/test_trips.csv",
   history_file: "tmp/test_request_history.csv",
   rate_limits_file: "tmp/test_rate_limits.csv"

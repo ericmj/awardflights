@@ -352,4 +352,59 @@ defmodule AwardflightsWeb.ScannerLiveTest do
       assert length(Awardflights.CredentialStore.list(:award)) == 2
     end
   end
+
+  describe "found flights" do
+    test "shows the itinerary of each flight", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      flight = %{
+        source: :award,
+        departure: "GOT",
+        arrival: "EWR",
+        date: "2026-09-04",
+        booking_class: "X",
+        cabin: "Economy",
+        available_tickets: 5,
+        points: 42000,
+        carriers: "SAS",
+        operating_carriers: "SAS Connect, SAS",
+        departure_time: "2026-09-04T10:05:00+02:00",
+        arrival_time: "2026-09-04T14:59:00-04:00",
+        duration: 654,
+        segments: [
+          %Awardflights.Itinerary.Segment{
+            flight_number: "SK443",
+            departure: "GOT",
+            arrival: "CPH",
+            departure_time: "2026-09-04T10:05:00+02:00",
+            arrival_time: "2026-09-04T10:50:00+02:00",
+            duration: 45,
+            marketing_carrier: "SAS",
+            operating_carrier: "SAS Connect"
+          },
+          %Awardflights.Itinerary.Segment{
+            flight_number: "SK909",
+            departure: "CPH",
+            arrival: "EWR",
+            departure_time: "2026-09-04T12:30:00+02:00",
+            arrival_time: "2026-09-04T14:59:00-04:00",
+            duration: 509,
+            marketing_carrier: "SAS",
+            operating_carrier: "SAS"
+          }
+        ],
+        stops: [%Awardflights.Itinerary.Stop{airport: "CPH", duration: 100}]
+      }
+
+      send(view.pid, {:flights_found, %{flights: [flight], count: 1, source: :award}})
+
+      html = render(view)
+
+      assert html =~ "GOT → CPH → EWR"
+      assert html =~ "10:05 – 14:59 · 10h 54m · 1 stop: CPH 1h 40m"
+      assert html =~ "SK443 GOT 10:05 → CPH 10:50 (45m, SAS Connect)"
+      assert html =~ "SK909 CPH 12:30 → EWR 14:59 (8h 29m, SAS)"
+      assert html =~ "operated by SAS Connect, SAS"
+    end
+  end
 end

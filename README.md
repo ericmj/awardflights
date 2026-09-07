@@ -33,3 +33,17 @@ The scanner requires SAS EuroBonus session credentials. Add them through the web
 ## Output
 
 Scan results are saved to `results.csv` and trip correlator results to `trips.csv`.
+
+`results.csv` holds one row per itinerary, cabin and booking class. Each scan of a
+route and date replaces the rows previously stored for it. Besides route, cabin,
+class, seats and points, a row carries the whole itinerary:
+
+- `carriers` / `operating_carriers` -- marketing and operating airlines
+- `departure_time` / `arrival_time` -- local times with UTC offset
+- `duration` -- total journey time in minutes
+- `segments` -- one entry per flight, `;`-separated, fields `|`-separated:
+  `flight_number|departure|arrival|departure_time|arrival_time|duration|marketing_carrier|operating_carrier`
+- `stops` -- one entry per layover, `;`-separated: `airport|minutes`
+
+`trips.csv` adds the same information per leg in readable form (times, total
+duration, layovers and one description per segment).

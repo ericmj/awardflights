@@ -4,7 +4,7 @@ defmodule Awardflights.SasAwardApi do
   """
   require Logger
 
-  alias Awardflights.Cabin
+  alias Awardflights.{Cabin, Itinerary}
 
   @base_url "https://www.sas.se/award-api/flights"
 
@@ -84,36 +84,36 @@ defmodule Awardflights.SasAwardApi do
     cabins = get_in(flight, ["cabins"]) || []
     departure = get_in(flight, ["origin", "code"]) || origin
     arrival = get_in(flight, ["destination", "code"]) || destination
-    carriers = extract_carriers(flight)
+    itinerary = Itinerary.from_flight(flight)
 
     Enum.flat_map(cabins, fn cabin ->
-      parse_cabin(cabin, departure, arrival, date, carriers)
+      parse_cabin(cabin, departure, arrival, date, itinerary)
     end)
   end
 
-  defp parse_cabin(cabin, departure, arrival, date, carriers) do
+  defp parse_cabin(cabin, departure, arrival, date, itinerary) do
     if get_in(cabin, ["availableSeats"]) != nil or cabin_points(cabin) > 0 do
       # Cabin-level pricing (session cookie / current shape)
-      parse_cabin_level(cabin, departure, arrival, date, carriers)
+      parse_cabin_level(cabin, departure, arrival, date, itinerary)
     else
       # Fare-level pricing (bearer token shape)
-      parse_cabin_fares(cabin, departure, arrival, date, carriers)
+      parse_cabin_fares(cabin, departure, arrival, date, itinerary)
     end
   end
 
   # Bearer token shape: points are in fares[].points.base
-  defp parse_cabin_fares(cabin, departure, arrival, date, carriers) do
+  defp parse_cabin_fares(cabin, departure, arrival, date, itinerary) do
     cabin_name = get_in(cabin, ["cabinName"])
     fares = get_in(cabin, ["fares"]) || []
 
     Enum.flat_map(fares, fn fare ->
-      parse_fare(fare, departure, arrival, date, cabin_name, carriers)
+      parse_fare(fare, departure, arrival, date, cabin_name, itinerary)
     end)
   end
 
   # Current/session shape: cabin name in `cabin`, seats in `availableSeats`,
   # points in `price.points` or `price.<awardType>.points` (e.g. SKY, BILATERAL).
-  defp parse_cabin_level(cabin, departure, arrival, date, carriers) do
+  defp parse_cabin_level(cabin, departure, arrival, date, itinerary) do
     cabin_name =
       get_in(cabin, ["cabin"]) || get_in(cabin, ["cabinName"]) || get_in(cabin, ["productName"])
 
@@ -124,16 +124,15 @@ defmodule Awardflights.SasAwardApi do
 
     if available_seats > 0 do
       [
-        %{
+        Map.merge(itinerary, %{
           departure: departure,
           arrival: arrival,
           date: date,
           booking_class: booking_class,
           cabin: format_cabin(cabin_name),
           available_tickets: available_seats,
-          points: points,
-          carriers: carriers
-        }
+          points: points
+        })
       ]
     else
       []
@@ -152,33 +151,22 @@ defmodule Awardflights.SasAwardApi do
   defp format_cabin(nil), do: "unknown"
   defp format_cabin(name), do: Cabin.format_name(name)
 
-  defp extract_carriers(flight) do
-    segments = get_in(flight, ["segments"]) || []
-
-    segments
-    |> Enum.map(&get_in(&1, ["marketingCarrier", "name"]))
-    |> Enum.reject(&is_nil/1)
-    |> Enum.uniq()
-    |> Enum.join(", ")
-  end
-
-  defp parse_fare(fare, departure, arrival, date, cabin_name, carriers) do
+  defp parse_fare(fare, departure, arrival, date, cabin_name, itinerary) do
     booking_class = get_in(fare, ["bookingClass"])
     available_seats = get_in(fare, ["avlSeats"]) || 0
     points = get_in(fare, ["points", "base"]) || get_in(fare, ["points"]) || 0
 
     if available_seats > 0 do
       [
-        %{
+        Map.merge(itinerary, %{
           departure: departure,
           arrival: arrival,
           date: date,
           booking_class: booking_class,
           cabin: format_cabin(cabin_name),
           available_tickets: available_seats,
-          points: points,
-          carriers: carriers
-        }
+          points: points
+        })
       ]
     else
       []

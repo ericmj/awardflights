@@ -250,7 +250,7 @@ defmodule AwardflightsWeb.ScannerLive do
     timestamped_flights = Enum.map(payload.flights, &Map.put(&1, :received_at, now))
     new_results = timestamped_flights ++ socket.assigns.results
 
-    # Aggregate duplicates (same route/date/cabin/class/points) by summing seats, then keep last 100
+    # Aggregate duplicates (same itinerary/date/cabin/class/points) by summing seats, then keep last 100
     aggregated = aggregate_results(new_results)
     {:noreply, assign(socket, results: Enum.take(aggregated, 100))}
   end
@@ -436,7 +436,7 @@ defmodule AwardflightsWeb.ScannerLive do
     results
     |> Enum.group_by(fn r ->
       {Map.get(r, :source, :award), r.departure, r.arrival, r.date, r.booking_class, r.cabin,
-       r.points}
+       r.points, Map.get(r, :segments)}
     end)
     |> Enum.map(fn {_key, group} ->
       # Use the most recent received_at from the group
@@ -1229,15 +1229,15 @@ defmodule AwardflightsWeb.ScannerLive do
                       {format_source(Map.get(result, :source, :award))}
                     </span>
                   </td>
-                  <td class="px-4 py-3 text-sm font-medium text-gray-900">
-                    {result.departure} → {result.arrival}
+                  <td class="px-4 py-3 text-sm">
+                    <.itinerary flight={result} />
                   </td>
                   <td class="px-4 py-3 text-sm text-gray-600">{result.date}</td>
                   <td class="px-4 py-3 text-sm text-gray-600">
                     {Awardflights.TripCorrelator.resolve_cabin(result.cabin, result.booking_class)}
                   </td>
                   <td class="px-4 py-3 text-sm text-gray-600">{result.booking_class}</td>
-                  <td class="px-4 py-3 text-sm text-gray-600">{Map.get(result, :carriers, "")}</td>
+                  <td class="px-4 py-3 text-sm text-gray-600"><.carriers flight={result} /></td>
                   <td class="px-4 py-3 text-sm text-gray-600">{result.available_tickets}</td>
                   <td class="px-4 py-3 text-sm text-gray-600">{result.points}</td>
                 </tr>

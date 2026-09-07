@@ -625,4 +625,77 @@ defmodule Awardflights.SasOffersApiTest do
                )
     end
   end
+
+  describe "itinerary details" do
+    test "includes segments, stops, times, durations and operating carriers" do
+      response =
+        Jason.encode!(%{
+          "outboundFlights" => %{
+            "F1" => %{
+              "origin" => %{"code" => "GOT"},
+              "destination" => %{"code" => "EWR"},
+              "connectionDuration" => "10:54:00",
+              "startTimeInLocal" => "2026-09-04T10:05:00.000+02:00",
+              "endTimeInLocal" => "2026-09-04T14:59:00.000-04:00",
+              "stops" => 1,
+              "via" => [%{"code" => "CPH", "name" => "Kastrup", "haltDuration" => "01:40:00"}],
+              "segments" => [
+                %{
+                  "flightNumber" => "443",
+                  "departureAirport" => %{"code" => "GOT"},
+                  "arrivalAirport" => %{"code" => "CPH"},
+                  "departureDateTimeInLocal" => "2026-09-04T10:05:00.000+02:00",
+                  "arrivalDateTimeInLocal" => "2026-09-04T10:50:00.000+02:00",
+                  "duration" => "00:45:00",
+                  "marketingCarrier" => %{"code" => "SK", "name" => "SAS"},
+                  "operatingCarrier" => %{"code" => "X1", "name" => "SAS Connect"}
+                },
+                %{
+                  "flightNumber" => "909",
+                  "departureAirport" => %{"code" => "CPH"},
+                  "arrivalAirport" => %{"code" => "EWR"},
+                  "departureDateTimeInLocal" => "2026-09-04T12:30:00.000+02:00",
+                  "arrivalDateTimeInLocal" => "2026-09-04T14:59:00.000-04:00",
+                  "duration" => "08:29:00",
+                  "marketingCarrier" => %{"code" => "SK", "name" => "SAS"}
+                }
+              ],
+              "cabins" => %{
+                "ECONOMY" => %{
+                  "STANDARD" => %{
+                    "products" => %{
+                      "X_1" => %{
+                        "price" => %{"points" => 42000, "basePrice" => 0},
+                        "fares" => [%{"bookingClass" => "X", "avlSeats" => 5}]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        })
+
+      setup_mock(response, 0)
+
+      assert {:ok, [flight]} =
+               SasOffersApi.search_flights("GOT", "EWR", "2026-09-04", "test_cookies")
+
+      assert flight.source == :offers
+      assert flight.carriers == "SAS"
+      assert flight.operating_carriers == "SAS Connect, SAS"
+      assert flight.departure_time == "2026-09-04T10:05:00+02:00"
+      assert flight.arrival_time == "2026-09-04T14:59:00-04:00"
+      assert flight.duration == 654
+      assert flight.stops == [%Awardflights.Itinerary.Stop{airport: "CPH", duration: 100}]
+
+      assert [first, second] = flight.segments
+      assert first.flight_number == "SK443"
+      assert first.duration == 45
+      assert first.operating_carrier == "SAS Connect"
+      assert second.flight_number == "SK909"
+      assert second.arrival == "EWR"
+      assert second.operating_carrier == "SAS"
+    end
+  end
 end

@@ -73,9 +73,9 @@ defmodule AwardflightsWeb.TripsLiveTest do
 
     test "displays found trips in table", %{conn: conn} do
       csv_content = """
-      departure,arrival,date,booking_class,cabin,available_tickets,points,timestamp
-      GOT,CDG,2026-02-01,X,Economy,5,20000,2026-01-18T10:00:00Z
-      CDG,GOT,2026-02-08,X,Economy,5,20000,2026-01-18T10:00:00Z
+      source,departure,arrival,date,booking_class,cabin,available_tickets,points,timestamp
+      award,GOT,CDG,2026-02-01,X,Economy,5,20000,2026-01-18T10:00:00Z
+      award,CDG,GOT,2026-02-08,X,Economy,5,20000,2026-01-18T10:00:00Z
       """
 
       File.write!(results_file(), csv_content)
@@ -107,11 +107,11 @@ defmodule AwardflightsWeb.TripsLiveTest do
 
     test "allows filtering by cabin class", %{conn: conn} do
       csv_content = """
-      departure,arrival,date,booking_class,cabin,available_tickets,points,timestamp
-      GOT,CDG,2026-02-01,X,Economy,5,20000,2026-01-18T10:00:00Z
-      GOT,CDG,2026-02-01,Z,Business,2,75000,2026-01-18T10:00:00Z
-      CDG,GOT,2026-02-08,X,Economy,5,20000,2026-01-18T10:00:00Z
-      CDG,GOT,2026-02-08,Z,Business,2,75000,2026-01-18T10:00:00Z
+      source,departure,arrival,date,booking_class,cabin,available_tickets,points,timestamp
+      award,GOT,CDG,2026-02-01,X,Economy,5,20000,2026-01-18T10:00:00Z
+      award,GOT,CDG,2026-02-01,Z,Business,2,75000,2026-01-18T10:00:00Z
+      award,CDG,GOT,2026-02-08,X,Economy,5,20000,2026-01-18T10:00:00Z
+      award,CDG,GOT,2026-02-08,Z,Business,2,75000,2026-01-18T10:00:00Z
       """
 
       File.write!(results_file(), csv_content)
@@ -142,14 +142,54 @@ defmodule AwardflightsWeb.TripsLiveTest do
     end
   end
 
+  describe "itinerary details" do
+    test "shows stops, times, segments and operating carriers", %{conn: conn} do
+      segments =
+        "SK443|GOT|CPH|2026-02-01T10:05:00+01:00|2026-02-01T10:50:00+01:00|45|SAS|SAS Connect;" <>
+          "SK909|CPH|EWR|2026-02-01T12:30:00+01:00|2026-02-01T14:59:00-05:00|509|SAS|SAS"
+
+      csv_content = """
+      source,departure,arrival,date,booking_class,cabin,available_tickets,points,carriers,operating_carriers,departure_time,arrival_time,duration,segments,stops,timestamp
+      award,GOT,EWR,2026-02-01,X,Economy,5,20000,SAS,"SAS Connect, SAS",2026-02-01T10:05:00+01:00,2026-02-01T14:59:00-05:00,654,#{segments},CPH|100,2026-01-18T10:00:00Z
+      award,EWR,GOT,2026-02-08,X,Economy,5,20000,SAS,SAS,2026-02-08T18:00:00-05:00,2026-02-09T08:30:00+01:00,510,SK910|EWR|GOT|2026-02-08T18:00:00-05:00|2026-02-09T08:30:00+01:00|510|SAS|SAS,,2026-01-18T10:00:00Z
+      """
+
+      File.write!(results_file(), csv_content)
+
+      {:ok, view, _html} = live(conn, "/trips")
+
+      view
+      |> element("form")
+      |> render_change(%{
+        "start_date" => "2026-02-01",
+        "end_date" => "2026-02-28",
+        "min_trip_days" => "5",
+        "max_trip_days" => "10"
+      })
+
+      html = view |> element("form") |> render_submit()
+
+      assert html =~ "Found 1 Round Trips"
+      assert html =~ "GOT → CPH → EWR"
+      assert html =~ "10:05 – 14:59 · 10h 54m · 1 stop: CPH 1h 40m"
+      assert html =~ "SK443 GOT 10:05 → CPH 10:50 (45m, SAS Connect)"
+      assert html =~ "SK909 CPH 12:30 → EWR 14:59 (8h 29m, SAS)"
+      assert html =~ "operated by SAS Connect, SAS"
+
+      assert html =~ "EWR → GOT"
+      assert html =~ "18:00 – 08:30+1 · 8h 30m · Direct"
+      refute html =~ "operated by SAS<"
+    end
+  end
+
   describe "sorting" do
     test "sorts by outbound date by default", %{conn: conn} do
       csv_content = """
-      departure,arrival,date,booking_class,cabin,available_tickets,points,timestamp
-      GOT,CDG,2026-02-05,X,Economy,5,20000,2026-01-18T10:00:00Z
-      GOT,CDG,2026-02-01,X,Economy,5,25000,2026-01-18T10:00:00Z
-      CDG,GOT,2026-02-12,X,Economy,5,20000,2026-01-18T10:00:00Z
-      CDG,GOT,2026-02-08,X,Economy,5,25000,2026-01-18T10:00:00Z
+      source,departure,arrival,date,booking_class,cabin,available_tickets,points,timestamp
+      award,GOT,CDG,2026-02-05,X,Economy,5,20000,2026-01-18T10:00:00Z
+      award,GOT,CDG,2026-02-01,X,Economy,5,25000,2026-01-18T10:00:00Z
+      award,CDG,GOT,2026-02-12,X,Economy,5,20000,2026-01-18T10:00:00Z
+      award,CDG,GOT,2026-02-08,X,Economy,5,25000,2026-01-18T10:00:00Z
       """
 
       File.write!(results_file(), csv_content)

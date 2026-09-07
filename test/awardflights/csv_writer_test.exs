@@ -1,13 +1,15 @@
 defmodule Awardflights.CsvWriterTest do
   use ExUnit.Case, async: false
 
-  alias Awardflights.CsvWriter
+  alias Awardflights.{Csv, CsvWriter}
+  alias Awardflights.Itinerary.{Segment, Stop}
+
+  @headers ~w(source departure arrival date booking_class cabin available_tickets points carriers operating_carriers departure_time arrival_time duration segments stops timestamp)
 
   defp results_file, do: Application.get_env(:awardflights, :results_file, "results.csv")
   defp failed_file, do: Application.get_env(:awardflights, :failed_file, "failed_requests.csv")
 
   setup do
-    # Clean up files and clear writer state
     CsvWriter.clear_files()
 
     on_exit(fn ->
@@ -18,106 +20,192 @@ defmodule Awardflights.CsvWriterTest do
     :ok
   end
 
-  describe "write_result/1" do
-    test "creates CSV file with header on first write" do
-      result = %{
-        departure: "GOT",
-        arrival: "CDG",
-        date: "2026-01-23",
-        booking_class: "X",
-        cabin: "Economy",
-        available_tickets: 9,
-        points: 24000
-      }
-
-      CsvWriter.write_result(result)
-
-      # Give the async cast time to complete
-      :timer.sleep(50)
-
-      assert File.exists?(results_file())
-
-      content = File.read!(results_file())
-      lines = String.split(content, "\n", trim: true)
-
-      assert length(lines) == 2
-
-      assert hd(lines) ==
-               "source,departure,arrival,date,booking_class,cabin,available_tickets,points,carriers,timestamp"
-
-      [_header, data_line] = lines
-      parts = String.split(data_line, ",")
-
-      # Source defaults to :award when not specified
-      assert Enum.at(parts, 0) == "award"
-      assert Enum.at(parts, 1) == "GOT"
-      assert Enum.at(parts, 2) == "CDG"
-      assert Enum.at(parts, 3) == "2026-01-23"
-      assert Enum.at(parts, 4) == "X"
-      assert Enum.at(parts, 5) == "Economy"
-      assert Enum.at(parts, 6) == "9"
-      assert Enum.at(parts, 7) == "24000"
-    end
-
-    test "writes result with offers source" do
-      result = %{
-        source: :offers,
-        departure: "GOT",
-        arrival: "CDG",
-        date: "2026-01-23",
-        booking_class: "X",
-        cabin: "Economy",
-        available_tickets: 9,
-        points: 24000
-      }
-
-      CsvWriter.write_result(result)
-      :timer.sleep(50)
-
-      content = File.read!(results_file())
-      lines = String.split(content, "\n", trim: true)
-      [_header, data_line] = lines
-      parts = String.split(data_line, ",")
-
-      assert Enum.at(parts, 0) == "offers"
-    end
-
-    test "appends multiple results to the same file" do
-      result1 = %{
-        departure: "GOT",
-        arrival: "CDG",
-        date: "2026-01-23",
-        booking_class: "X",
-        cabin: "Economy",
-        available_tickets: 9,
-        points: 24000
-      }
-
-      result2 = %{
-        departure: "ARN",
-        arrival: "LHR",
-        date: "2026-01-24",
-        booking_class: "Z",
-        cabin: "Business",
-        available_tickets: 2,
-        points: 75000
-      }
-
-      CsvWriter.write_result(result1)
-      CsvWriter.write_result(result2)
-
-      :timer.sleep(50)
-
-      content = File.read!(results_file())
-      lines = String.split(content, "\n", trim: true)
-
-      assert length(lines) == 3
-    end
+  # Casts to the writer, then waits until it has processed the message.
+  defp write_results(source, origin, destination, date, results) do
+    CsvWriter.write_results(source, origin, destination, date, results)
+    _ = :sys.get_state(CsvWriter)
   end
 
-  describe "write_results/1" do
-    test "writes multiple results at once" do
-      results = [
+  defp write_failed(args) do
+    apply(CsvWriter, :write_failed, args)
+    _ = :sys.get_state(CsvWriter)
+  end
+
+  defp read_results do
+    [headers | rows] = results_file() |> File.read!() |> Csv.parse_string(skip_headers: false)
+    {headers, Enum.map(rows, &Map.new(Enum.zip(headers, &1)))}
+  end
+
+  defp read_failed do
+    [headers | rows] = failed_file() |> File.read!() |> Csv.parse_string(skip_headers: false)
+    {headers, Enum.map(rows, &Map.new(Enum.zip(headers, &1)))}
+  end
+
+  @segment %Segment{
+    flight_number: "SK1",
+    departure: "GOT",
+    arrival: "CDG",
+    departure_time: "2026-01-23T10:05:00+01:00",
+    arrival_time: "2026-01-23T12:30:00+01:00",
+    duration: 145,
+    marketing_carrier: "SAS",
+    operating_carrier: "SAS Connect"
+  }
+
+  defp flight(overrides \\ %{}) do
+    Map.merge(
+      %{
+        departure: "GOT",
+        arrival: "CDG",
+        date: "2026-01-23",
+        booking_class: "X",
+        cabin: "Economy",
+        available_tickets: 9,
+        points: 24000,
+        carriers: "SAS",
+        operating_carriers: "SAS Connect",
+        departure_time: "2026-01-23T10:05:00+01:00",
+        arrival_time: "2026-01-23T12:30:00+01:00",
+        duration: 145,
+        segments: [@segment],
+        stops: []
+      },
+      overrides
+    )
+  end
+
+  defp via_cph(overrides \\ %{}) do
+    flight(
+      Map.merge(
+        %{
+          operating_carriers: "SAS",
+          departure_time: "2026-01-23T07:00:00+01:00",
+          arrival_time: "2026-01-23T12:30:00+01:00",
+          duration: 330,
+          segments: [
+            %Segment{
+              @segment
+              | flight_number: "SK400",
+                arrival: "CPH",
+                departure_time: "2026-01-23T07:00:00+01:00",
+                arrival_time: "2026-01-23T07:45:00+01:00",
+                duration: 45,
+                operating_carrier: "SAS"
+            },
+            %Segment{
+              @segment
+              | flight_number: "SK560",
+                departure: "CPH",
+                departure_time: "2026-01-23T10:30:00+01:00",
+                duration: 120,
+                operating_carrier: "SAS"
+            }
+          ],
+          stops: [%Stop{airport: "CPH", duration: 165}]
+        },
+        overrides
+      )
+    )
+  end
+
+  describe "write_results/5" do
+    test "writes the header and every column of a result" do
+      write_results(:award, "GOT", "CDG", "2026-01-23", [flight()])
+
+      {headers, [row]} = read_results()
+
+      assert headers == @headers
+      assert row["source"] == "award"
+      assert row["departure"] == "GOT"
+      assert row["arrival"] == "CDG"
+      assert row["date"] == "2026-01-23"
+      assert row["booking_class"] == "X"
+      assert row["cabin"] == "Economy"
+      assert row["available_tickets"] == "9"
+      assert row["points"] == "24000"
+      assert row["carriers"] == "SAS"
+      assert row["operating_carriers"] == "SAS Connect"
+      assert row["departure_time"] == "2026-01-23T10:05:00+01:00"
+      assert row["arrival_time"] == "2026-01-23T12:30:00+01:00"
+      assert row["duration"] == "145"
+
+      assert row["segments"] ==
+               "SK1|GOT|CDG|2026-01-23T10:05:00+01:00|2026-01-23T12:30:00+01:00|145|SAS|SAS Connect"
+
+      assert row["stops"] == ""
+      assert {:ok, _, _} = DateTime.from_iso8601(row["timestamp"])
+    end
+
+    test "writes the source of the query" do
+      write_results(:offers, "GOT", "CDG", "2026-01-23", [flight()])
+
+      {_headers, [row]} = read_results()
+      assert row["source"] == "offers"
+    end
+
+    test "stores each itinerary on its own row" do
+      write_results(:award, "GOT", "CDG", "2026-01-23", [flight(), via_cph()])
+
+      {_headers, rows} = read_results()
+
+      assert Enum.map(rows, & &1["stops"]) == ["", "CPH|165"]
+      assert Enum.map(rows, & &1["duration"]) == ["145", "330"]
+      assert Enum.map(rows, & &1["available_tickets"]) == ["9", "9"]
+    end
+
+    test "sums seats of results with the same itinerary, cabin, class and points" do
+      write_results(:award, "GOT", "CDG", "2026-01-23", [
+        flight(%{available_tickets: 5}),
+        flight(%{available_tickets: 3}),
+        flight(%{available_tickets: 2, booking_class: "Z", cabin: "Business", points: 75000})
+      ])
+
+      {_headers, rows} = read_results()
+
+      assert Enum.map(rows, &{&1["booking_class"], &1["available_tickets"]}) == [
+               {"X", "8"},
+               {"Z", "2"}
+             ]
+    end
+
+    test "replaces the rows of the same query and keeps other queries" do
+      write_results(:award, "GOT", "CDG", "2026-01-23", [
+        flight(),
+        flight(%{booking_class: "Z", cabin: "Business", points: 75000})
+      ])
+
+      write_results(:award, "ARN", "LHR", "2026-01-24", [
+        flight(%{departure: "ARN", arrival: "LHR", date: "2026-01-24"})
+      ])
+
+      write_results(:offers, "GOT", "CDG", "2026-01-23", [flight(%{available_tickets: 4})])
+
+      write_results(:award, "GOT", "CDG", "2026-01-23", [flight(%{available_tickets: 1})])
+
+      {_headers, rows} = read_results()
+
+      assert Enum.map(
+               rows,
+               &{&1["source"], &1["departure"], &1["arrival"], &1["booking_class"],
+                &1["available_tickets"]}
+             ) == [
+               {"award", "ARN", "LHR", "X", "9"},
+               {"offers", "GOT", "CDG", "X", "4"},
+               {"award", "GOT", "CDG", "X", "1"}
+             ]
+    end
+
+    test "an empty result removes the rows previously stored for the query" do
+      write_results(:award, "GOT", "CDG", "2026-01-23", [flight()])
+      write_results(:award, "GOT", "CDG", "2026-01-23", [])
+
+      {headers, rows} = read_results()
+      assert headers == @headers
+      assert rows == []
+    end
+
+    test "leaves itinerary columns empty for results without itinerary data" do
+      write_results(:award, "GOT", "CDG", "2026-01-23", [
         %{
           departure: "GOT",
           arrival: "CDG",
@@ -126,108 +214,70 @@ defmodule Awardflights.CsvWriterTest do
           cabin: "Economy",
           available_tickets: 9,
           points: 24000
-        },
-        %{
-          departure: "ARN",
-          arrival: "LHR",
-          date: "2026-01-24",
-          booking_class: "Z",
-          cabin: "Business",
-          available_tickets: 2,
-          points: 75000
         }
-      ]
+      ])
 
-      CsvWriter.write_results(results)
+      {_headers, [row]} = read_results()
 
-      :timer.sleep(50)
+      assert row["carriers"] == ""
+      assert row["operating_carriers"] == ""
+      assert row["departure_time"] == ""
+      assert row["duration"] == ""
+      assert row["segments"] == ""
+      assert row["stops"] == ""
+    end
+
+    test "escapes fields containing commas and quotes" do
+      write_results(:award, "GOT", "CDG", "2026-01-23", [
+        flight(%{carriers: "SAS, KLM", cabin: "Economy \"Basic\""})
+      ])
 
       content = File.read!(results_file())
-      lines = String.split(content, "\n", trim: true)
+      assert content =~ "\"SAS, KLM\""
+      assert content =~ "\"Economy \"\"Basic\"\"\""
 
-      assert length(lines) == 3
+      {_headers, [row]} = read_results()
+      assert row["carriers"] == "SAS, KLM"
+      assert row["cabin"] == "Economy \"Basic\""
     end
   end
 
   describe "write_failed/5" do
     test "creates failed requests CSV with header" do
-      CsvWriter.write_failed("GOT", "NYC", "2026-02-15", :auth_expired)
+      write_failed(["GOT", "NYC", "2026-02-15", :auth_expired])
 
-      :timer.sleep(50)
+      {headers, [row]} = read_failed()
 
-      assert File.exists?(failed_file())
-
-      content = File.read!(failed_file())
-      lines = String.split(content, "\n", trim: true)
-
-      assert length(lines) == 2
-      assert hd(lines) == "source,origin,destination,date,error,timestamp"
-
-      [_header, data_line] = lines
-      parts = String.split(data_line, ",")
-
-      # Source defaults to :award
-      assert Enum.at(parts, 0) == "award"
-      assert Enum.at(parts, 1) == "GOT"
-      assert Enum.at(parts, 2) == "NYC"
-      assert Enum.at(parts, 3) == "2026-02-15"
-      assert Enum.at(parts, 4) == "auth_expired"
+      assert headers == ~w(source origin destination date error timestamp)
+      assert row["source"] == "award"
+      assert row["origin"] == "GOT"
+      assert row["destination"] == "NYC"
+      assert row["date"] == "2026-02-15"
+      assert row["error"] == "auth_expired"
     end
 
     test "writes failed request with explicit source" do
-      CsvWriter.write_failed(:offers, "GOT", "NYC", "2026-02-15", :cloudflare_blocked)
+      write_failed([:offers, "GOT", "NYC", "2026-02-15", :cloudflare_blocked])
 
-      :timer.sleep(50)
-
-      content = File.read!(failed_file())
-      lines = String.split(content, "\n", trim: true)
-      [_header, data_line] = lines
-      parts = String.split(data_line, ",")
-
-      assert Enum.at(parts, 0) == "offers"
-      assert Enum.at(parts, 4) == "cloudflare_blocked"
+      {_headers, [row]} = read_failed()
+      assert row["source"] == "offers"
+      assert row["error"] == "cloudflare_blocked"
     end
 
-    test "handles http_error tuples" do
-      CsvWriter.write_failed("GOT", "NYC", "2026-02-15", {:http_error, 500, %{}})
+    test "appends rows" do
+      write_failed(["GOT", "NYC", "2026-02-15", :auth_expired])
+      write_failed(["GOT", "NYC", "2026-02-16", {:http_error, 500, %{}}])
+      write_failed(["GOT", "NYC", "2026-02-17", {:request_failed, %{}}])
 
-      :timer.sleep(50)
-
-      content = File.read!(failed_file())
-      lines = String.split(content, "\n", trim: true)
-      [_header, data_line] = lines
-
-      assert String.contains?(data_line, "http_500")
-    end
-
-    test "handles request_failed errors" do
-      CsvWriter.write_failed("GOT", "NYC", "2026-02-15", {:request_failed, %{}})
-
-      :timer.sleep(50)
-
-      content = File.read!(failed_file())
-      lines = String.split(content, "\n", trim: true)
-      [_header, data_line] = lines
-
-      assert String.contains?(data_line, "request_failed")
+      {_headers, rows} = read_failed()
+      assert Enum.map(rows, & &1["error"]) == ["auth_expired", "http_500", "request_failed"]
     end
   end
 
   describe "clear_files/0" do
     test "removes both CSV files" do
-      CsvWriter.write_result(%{
-        departure: "GOT",
-        arrival: "CDG",
-        date: "2026-01-23",
-        booking_class: "X",
-        cabin: "Economy",
-        available_tickets: 9,
-        points: 24000
-      })
-
-      CsvWriter.write_failed("GOT", "NYC", "2026-02-15", :auth_expired)
-
-      :timer.sleep(50)
+      write_results(:award, "GOT", "CDG", "2026-01-23", [flight()])
+      write_failed(["GOT", "NYC", "2026-02-15", :auth_expired])
 
       assert File.exists?(results_file())
       assert File.exists?(failed_file())
@@ -236,163 +286,6 @@ defmodule Awardflights.CsvWriterTest do
 
       refute File.exists?(results_file())
       refute File.exists?(failed_file())
-    end
-  end
-
-  describe "deduplication" do
-    test "replaces existing result with same key" do
-      # Write initial result
-      result1 = %{
-        source: :award,
-        departure: "GOT",
-        arrival: "CDG",
-        date: "2026-01-23",
-        booking_class: "X",
-        cabin: "Economy",
-        available_tickets: 5,
-        points: 24000
-      }
-
-      CsvWriter.write_result(result1)
-      :timer.sleep(50)
-
-      # Write updated result with same key but different availability
-      result2 = %{
-        source: :award,
-        departure: "GOT",
-        arrival: "CDG",
-        date: "2026-01-23",
-        booking_class: "X",
-        cabin: "Economy",
-        available_tickets: 3,
-        points: 20000
-      }
-
-      CsvWriter.write_result(result2)
-      :timer.sleep(50)
-
-      content = File.read!(results_file())
-      lines = String.split(content, "\n", trim: true)
-
-      # Should have header + 1 data row (not 2)
-      assert length(lines) == 2
-
-      [_header, data_line] = lines
-      parts = String.split(data_line, ",")
-
-      # Should have the updated values
-      assert Enum.at(parts, 6) == "3"
-      assert Enum.at(parts, 7) == "20000"
-    end
-
-    test "keeps results with different keys" do
-      result1 = %{
-        source: :award,
-        departure: "GOT",
-        arrival: "CDG",
-        date: "2026-01-23",
-        booking_class: "X",
-        cabin: "Economy",
-        available_tickets: 5,
-        points: 24000
-      }
-
-      result2 = %{
-        source: :award,
-        departure: "GOT",
-        arrival: "CDG",
-        date: "2026-01-23",
-        booking_class: "Z",
-        cabin: "Business",
-        available_tickets: 2,
-        points: 75000
-      }
-
-      CsvWriter.write_result(result1)
-      CsvWriter.write_result(result2)
-      :timer.sleep(50)
-
-      content = File.read!(results_file())
-      lines = String.split(content, "\n", trim: true)
-
-      # Should have header + 2 data rows (different booking class/cabin)
-      assert length(lines) == 3
-    end
-
-    test "different sources are treated as different keys" do
-      result1 = %{
-        source: :award,
-        departure: "GOT",
-        arrival: "CDG",
-        date: "2026-01-23",
-        booking_class: "X",
-        cabin: "Economy",
-        available_tickets: 5,
-        points: 24000
-      }
-
-      result2 = %{
-        source: :offers,
-        departure: "GOT",
-        arrival: "CDG",
-        date: "2026-01-23",
-        booking_class: "X",
-        cabin: "Economy",
-        available_tickets: 3,
-        points: 20000
-      }
-
-      CsvWriter.write_result(result1)
-      CsvWriter.write_result(result2)
-      :timer.sleep(50)
-
-      content = File.read!(results_file())
-      lines = String.split(content, "\n", trim: true)
-
-      # Should have header + 2 data rows (different source)
-      assert length(lines) == 3
-    end
-  end
-
-  describe "CSV escaping" do
-    test "escapes fields containing commas" do
-      result = %{
-        departure: "GOT",
-        arrival: "CDG",
-        date: "2026-01-23",
-        booking_class: "X",
-        cabin: "Economy, Plus",
-        available_tickets: 9,
-        points: 24000
-      }
-
-      CsvWriter.write_result(result)
-
-      :timer.sleep(50)
-
-      content = File.read!(results_file())
-
-      assert String.contains?(content, "\"Economy, Plus\"")
-    end
-
-    test "escapes fields containing quotes" do
-      result = %{
-        departure: "GOT",
-        arrival: "CDG",
-        date: "2026-01-23",
-        booking_class: "X",
-        cabin: "Economy \"Basic\"",
-        available_tickets: 9,
-        points: 24000
-      }
-
-      CsvWriter.write_result(result)
-
-      :timer.sleep(50)
-
-      content = File.read!(results_file())
-
-      assert String.contains?(content, "\"Economy \"\"Basic\"\"\"")
     end
   end
 end

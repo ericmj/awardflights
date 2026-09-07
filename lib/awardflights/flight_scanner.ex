@@ -189,7 +189,7 @@ defmodule Awardflights.FlightScanner do
         # Add source to each flight
         flights_with_source = Enum.map(flights, fn f -> Map.put(f, :source, source) end)
         RequestTracker.record_success(source, origin, destination, date)
-        CsvWriter.write_results(flights_with_source)
+        CsvWriter.write_results(source, origin, destination, date, flights_with_source)
 
         broadcast(:flights_found, %{
           flights: flights_with_source,

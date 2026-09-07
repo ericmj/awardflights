@@ -81,6 +81,7 @@ defmodule AwardflightsWeb do
       import Phoenix.HTML
       # Core UI components
       import AwardflightsWeb.CoreComponents
+      import AwardflightsWeb.ItineraryComponents
 
       # Common modules used in templates
       alias Phoenix.LiveView.JS

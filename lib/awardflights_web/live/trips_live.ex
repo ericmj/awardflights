@@ -466,8 +466,8 @@ defmodule AwardflightsWeb.TripsLive do
                   <td class="px-4 py-3 text-sm text-gray-600 bg-blue-50/30">
                     {Date.to_string(trip.outbound.date)}
                   </td>
-                  <td class="px-4 py-3 text-sm font-medium text-gray-900 bg-blue-50/30">
-                    {trip.outbound.departure} → {trip.outbound.arrival}
+                  <td class="px-4 py-3 text-sm bg-blue-50/30">
+                    <.itinerary flight={trip.outbound} />
                   </td>
                   <td class="px-4 py-3 text-sm text-gray-600 bg-blue-50/30">
                     {trip.outbound.cabin}
@@ -476,7 +476,7 @@ defmodule AwardflightsWeb.TripsLive do
                     {trip.outbound.booking_class}
                   </td>
                   <td class="px-4 py-3 text-sm text-gray-600 bg-blue-50/30">
-                    {trip.outbound.carriers}
+                    <.carriers flight={trip.outbound} />
                   </td>
                   <td class="px-4 py-3 text-sm text-gray-600 bg-blue-50/30">
                     {trip.outbound.available_tickets}
@@ -494,8 +494,8 @@ defmodule AwardflightsWeb.TripsLive do
                   <td class="px-4 py-3 text-sm text-gray-600 bg-green-50/30">
                     {Date.to_string(trip.return.date)}
                   </td>
-                  <td class="px-4 py-3 text-sm font-medium text-gray-900 bg-green-50/30">
-                    {trip.return.departure} → {trip.return.arrival}
+                  <td class="px-4 py-3 text-sm bg-green-50/30">
+                    <.itinerary flight={trip.return} />
                   </td>
                   <td class="px-4 py-3 text-sm text-gray-600 bg-green-50/30">
                     {trip.return.cabin}
@@ -504,7 +504,7 @@ defmodule AwardflightsWeb.TripsLive do
                     {trip.return.booking_class}
                   </td>
                   <td class="px-4 py-3 text-sm text-gray-600 bg-green-50/30">
-                    {trip.return.carriers}
+                    <.carriers flight={trip.return} />
                   </td>
                   <td class="px-4 py-3 text-sm text-gray-600 bg-green-50/30">
                     {trip.return.available_tickets}

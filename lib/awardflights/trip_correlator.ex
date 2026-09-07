@@ -4,6 +4,8 @@ defmodule Awardflights.TripCorrelator do
   Matches outbound flights with valid return flights based on configurable criteria.
   """
 
+  alias Awardflights.{Csv, Itinerary}
+
   defp results_file, do: Application.get_env(:awardflights, :results_file, "results.csv")
   defp trips_file, do: Application.get_env(:awardflights, :trips_file, "trips.csv")
 
@@ -18,7 +20,13 @@ defmodule Awardflights.TripCorrelator do
       :cabin,
       :available_tickets,
       :points,
-      :carriers
+      :carriers,
+      :operating_carriers,
+      :departure_time,
+      :arrival_time,
+      :duration,
+      segments: [],
+      stops: []
     ]
   end
 
@@ -26,6 +34,12 @@ defmodule Awardflights.TripCorrelator do
     @moduledoc "Represents a round trip (outbound + return flights)"
     defstruct [:outbound, :return, :total_points, :trip_days]
   end
+
+  @required_columns ~w(source departure arrival date booking_class cabin available_tickets points)
+
+  @leg_columns ~w(source date route cabin class carriers seats operating_carriers departure_time arrival_time duration stops segments)
+  @trips_headers Enum.map(@leg_columns, &"outbound_#{&1}") ++
+                   Enum.map(@leg_columns, &"return_#{&1}") ++ ["trip_days"]
 
   @doc """
   Find round trips matching the given filter criteria.
@@ -58,33 +72,30 @@ defmodule Awardflights.TripCorrelator do
   Write trips to CSV file, overwriting any existing content.
   """
   def write_trips_csv(trips) do
-    header =
-      "outbound_source,outbound_date,outbound_route,outbound_cabin,outbound_class,outbound_carriers,outbound_seats,return_source,return_date,return_route,return_cabin,return_class,return_carriers,return_seats,trip_days"
-
-    lines =
+    rows =
       Enum.map(trips, fn trip ->
-        [
-          format_source(trip.outbound.source),
-          Date.to_string(trip.outbound.date),
-          "#{trip.outbound.departure}-#{trip.outbound.arrival}",
-          trip.outbound.cabin,
-          trip.outbound.booking_class,
-          trip.outbound.carriers || "",
-          trip.outbound.available_tickets,
-          format_source(trip.return.source),
-          Date.to_string(trip.return.date),
-          "#{trip.return.departure}-#{trip.return.arrival}",
-          trip.return.cabin,
-          trip.return.booking_class,
-          trip.return.carriers || "",
-          trip.return.available_tickets,
-          trip.trip_days
-        ]
-        |> Enum.join(",")
+        leg_columns(trip.outbound) ++ leg_columns(trip.return) ++ [trip.trip_days]
       end)
 
-    content = Enum.join([header | lines], "\n") <> "\n"
-    File.write(trips_file(), content)
+    File.write(trips_file(), Csv.dump_to_iodata([@trips_headers | rows]))
+  end
+
+  defp leg_columns(flight) do
+    [
+      format_source(flight.source),
+      Date.to_string(flight.date),
+      "#{flight.departure}-#{flight.arrival}",
+      flight.cabin,
+      flight.booking_class,
+      flight.carriers,
+      flight.available_tickets,
+      flight.operating_carriers,
+      Itinerary.format_time(flight.departure_time, flight.departure_time),
+      Itinerary.format_time(flight.arrival_time, flight.departure_time),
+      Itinerary.format_duration(flight.duration),
+      Itinerary.describe_stops(flight),
+      Itinerary.describe_segments(flight)
+    ]
   end
 
   @doc """
@@ -99,88 +110,58 @@ defmodule Awardflights.TripCorrelator do
   end
 
   defp parse_csv(content) do
-    [_header | rows] =
-      content
-      |> String.trim()
-      |> String.split("\n")
-
-    rows
-    |> Enum.map(&parse_row/1)
-    |> Enum.reject(&is_nil/1)
-  end
-
-  defp parse_row(row) do
-    case parse_csv_line(row) do
-      # New format with source column (source is "award" or "offers")
-      [source, departure, arrival, date, booking_class, cabin, available_tickets, points | rest]
-      when source in ["award", "offers"] ->
-        carriers = parse_carriers(rest)
-
-        %Flight{
-          source: source,
-          departure: departure,
-          arrival: arrival,
-          date: parse_date(date),
-          booking_class: booking_class,
-          cabin: resolve_cabin(cabin, booking_class),
-          available_tickets: parse_int(available_tickets),
-          points: parse_int(points),
-          carriers: carriers
-        }
-
-      # Old format without source column (backward compatibility)
-      [departure, arrival, date, booking_class, cabin, available_tickets, points | rest] ->
-        carriers = parse_carriers(rest)
-
-        %Flight{
-          source: "award",
-          departure: departure,
-          arrival: arrival,
-          date: parse_date(date),
-          booking_class: booking_class,
-          cabin: resolve_cabin(cabin, booking_class),
-          available_tickets: parse_int(available_tickets),
-          points: parse_int(points),
-          carriers: carriers
-        }
-
-      _ ->
-        nil
+    case Csv.parse_string(content, skip_headers: false) do
+      [headers | rows] -> rows |> Enum.map(&parse_row(headers, &1)) |> Enum.reject(&is_nil/1)
+      [] -> []
     end
   end
 
-  defp parse_csv_line(line) do
-    # Simple CSV parsing that handles quoted fields
-    line
-    |> String.split(",")
-    |> Enum.map(&String.trim/1)
-    |> Enum.map(&String.trim(&1, "\""))
+  defp parse_row(headers, row) do
+    fields = headers |> Enum.zip(row) |> Map.new()
+
+    if Enum.all?(@required_columns, &Map.has_key?(fields, &1)) do
+      %Flight{
+        source: fields["source"],
+        departure: fields["departure"],
+        arrival: fields["arrival"],
+        date: parse_date(fields["date"]),
+        booking_class: fields["booking_class"],
+        cabin: resolve_cabin(fields["cabin"], fields["booking_class"]),
+        available_tickets: parse_int(fields["available_tickets"]),
+        points: parse_int(fields["points"]),
+        carriers: fields["carriers"] || "",
+        operating_carriers: fields["operating_carriers"] || "",
+        departure_time: blank_to_nil(fields["departure_time"]),
+        arrival_time: blank_to_nil(fields["arrival_time"]),
+        duration: parse_optional_int(fields["duration"]),
+        segments: Itinerary.decode_segments(fields["segments"]),
+        stops: Itinerary.decode_stops(fields["stops"])
+      }
+    end
   end
 
-  defp parse_date(date_str) do
+  defp parse_date(date_str) when is_binary(date_str) do
     case Date.from_iso8601(date_str) do
       {:ok, date} -> date
       _ -> nil
     end
   end
 
-  defp parse_carriers([carriers | _rest]) when is_binary(carriers) do
-    if String.match?(carriers, ~r/^\d/) do
-      # This is a timestamp, not carriers (old format without carriers column)
-      ""
-    else
-      carriers
-    end
-  end
+  defp parse_date(_), do: nil
 
-  defp parse_carriers(_), do: ""
+  defp parse_int(str), do: parse_optional_int(str) || 0
 
-  defp parse_int(str) do
+  defp parse_optional_int(str) when is_binary(str) do
     case Integer.parse(str) do
       {n, _} -> n
-      :error -> 0
+      :error -> nil
     end
   end
+
+  defp parse_optional_int(_), do: nil
+
+  defp blank_to_nil(value) when value in [nil, ""], do: nil
+  defp blank_to_nil(value), do: value
 
   @class_to_cabin %{
     "X" => "Economy",
